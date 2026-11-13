@@ -3,7 +3,8 @@ from litellm import completion
 
 #짧은 이름 -> 실제 모델 ID (모델 변경시 여기만 수정)
 MODELS = {
-    "gemini": "gemini/gemini-flash-latest",
+    # Flash 계열 503(과부하) 지속으로 임시로 Flash-Lite 사용. 복구되면 "gemini/gemini-3.8-flash"로 되돌리기
+    "gemini": "gemini/gemini-3.5-flash-lite",
     "claude": "anthropic/claude-haiku-5-5",
     "claude-pro": "anthropic/claude-sonnet-5-5",
 }
@@ -31,7 +32,9 @@ def chat(prompt, system=None, model=None, temperature=None):
     kwargs = {}
     if temperature is not None:
         kwargs["temperature"] = temperature
-    resp = completion(model=resolve(model), messages=messages, **kwargs, timeout=30)
+    # 503 등 일시적 오류는 LiteLLM이 최대 3번 재시도
+    resp = completion(model=resolve(model), messages=messages, **kwargs,
+                      timeout=60, num_retries=3)
     return resp.choices[0].message.content
 
 
