@@ -1,4 +1,5 @@
 import os
+import warnings
 from litellm import completion
 
 #짧은 이름 -> 실제 모델 ID (모델 변경시 여기만 수정)
@@ -23,7 +24,9 @@ def resolve(model=None):
 #    return resp.choices[0].message.content 
 
 
-def chat(prompt, system=None, model=None, temperature=None):
+def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, timeout=60):
+    """max_tokens: 최대 출력 토큰 수 (None이면 LiteLLM/모델 기본값)
+    timeout: 1회 요청 제한 시간(초). 출력이 길면 함께 늘려야 함"""
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -32,10 +35,16 @@ def chat(prompt, system=None, model=None, temperature=None):
     kwargs = {}
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     # 503 등 일시적 오류는 LiteLLM이 최대 3번 재시도
     resp = completion(model=resolve(model), messages=messages, **kwargs,
-                      timeout=60, num_retries=3)
-    return resp.choices[0].message.content
+                      timeout=timeout, num_retries=3)
+    choice = resp.choices[0]
+    if choice.finish_reason == "length":
+        warnings.warn(f"{resolve(model)} 응답이 max_tokens 한도에서 잘렸습니다. "
+                      f"max_tokens 값을 늘려주세요.")
+    return choice.message.content
 
 
 def check_all():
