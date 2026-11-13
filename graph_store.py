@@ -2,7 +2,7 @@ import os
 from neo4j import GraphDatabase
 
 #제조공정 스키마 (작업하면서 확장)
-ALLOWED_LABELS = {"Process", "Equipment", "Material", "Parameter"}
+ALLOWED_LABELS = {"Process", "Equipment", "Material", "Parameter", "Defect"}
 ALLOWED_RELS = {"NEXT", "USES", "CONSUMES", "PRODUCES", "HAS_PARAMETER", "CAUSES"}
 
 class GraphStore:
