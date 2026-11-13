@@ -24,9 +24,11 @@ def resolve(model=None):
 #    return resp.choices[0].message.content 
 
 
-def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, timeout=60):
+def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, timeout=60,
+         json_mode=False):
     """max_tokens: 최대 출력 토큰 수 (None이면 LiteLLM/모델 기본값)
-    timeout: 1회 요청 제한 시간(초). 출력이 길면 함께 늘려야 함"""
+    timeout: 1회 요청 제한 시간(초). 출력이 길면 함께 늘려야 함
+    json_mode: True면 문법에 맞는 JSON만 출력하도록 제한 (response_format)"""
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -37,6 +39,8 @@ def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, tim
         kwargs["temperature"] = temperature
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
     # 503 등 일시적 오류는 LiteLLM이 최대 3번 재시도
     resp = completion(model=resolve(model), messages=messages, **kwargs,
                       timeout=timeout, num_retries=3)
