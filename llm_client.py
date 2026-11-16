@@ -8,7 +8,9 @@ MODELS = {
     "gemini": "gemini/gemini-3.5-flash-lite",
     "claude": "anthropic/claude-haiku-5-5",
     "claude-pro": "anthropic/claude-sonnet-5-5",
+    "Qwen": "groq/qwen/qwen3.8-27b",
 }
+
 DEFAULT = os.getenv("LLM_MODEL","claude")
 
 def resolve(model=None):
@@ -35,6 +37,9 @@ def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, tim
     messages.append({"role": "user", "content": prompt})
 
     kwargs = {}
+    MODEL_OPTIONS = {
+    "qwen": {"extra_body": {"responsing_effort": "none"}},
+    }
     if temperature is not None:
         kwargs["temperature"] = temperature
     if max_tokens is not None:
