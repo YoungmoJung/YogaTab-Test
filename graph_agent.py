@@ -8,14 +8,16 @@
 """
 import json
 import re
+from itertools import islice
 
 from litellm import completion
-from neo4j import READ_ACCESS
+from neo4j import READ_ACCESS, unit_of_work
 
 import llm_client
 from graph_store import GraphStore
 
 MAX_ROWS = 50  # 한 번에 LLM에게 넘길 최대 행 수 (토큰 절약)
+QUERY_TIMEOUT = 10  # 쿼리 1회 실행 제한 시간(초). 넘으면 오류로 LLM에게 전달
 
 SYSTEM = """너는 제조공정 지식 그래프(Neo4j)를 조회해서 질문에 답하는 도우미다.
 작업 순서:
@@ -52,9 +54,18 @@ _WRITE = re.compile(r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|F
                     re.IGNORECASE)
 
 
-def _rows(store, query, params=None):
+@unit_of_work(timeout=QUERY_TIMEOUT)
+def _read(tx, query, limit):
+    result = tx.run(query)
+    if limit is None:
+        return result.data()
+    # 필요한 행만 가져오고 나머지는 받지 않음 (큰 결과로 인한 메모리/시간 낭비 방지)
+    return [rec.data() for rec in islice(result, limit)]
+
+
+def _rows(store, query, limit=None):
     with store.driver.session(default_access_mode=READ_ACCESS) as s:
-        return s.execute_read(lambda tx: tx.run(query, params or {}).data())
+        return s.execute_read(_read, query, limit)
 
 
 def get_schema(store):
@@ -74,11 +85,14 @@ def run_cypher(store, query):
     if _WRITE.search(query):
         return {"error": "쓰기 쿼리는 허용되지 않습니다. 읽기 전용 쿼리만 사용하세요."}
     try:
-        rows = _rows(store, query)
-    except Exception as e:  # 문법 오류 등은 LLM이 보고 고칠 수 있도록 그대로 전달
+        # MAX_ROWS보다 1행 더 가져와서 잘렸는지 판단
+        rows = _rows(store, query, limit=MAX_ROWS + 1)
+    except Exception as e:  # 문법 오류, 시간 초과 등은 LLM이 보고 고칠 수 있도록 그대로 전달
         return {"error": f"{type(e).__name__}: {str(e)[:300]}"}
-    return {"row_count": len(rows), "rows": rows[:MAX_ROWS],
-            "truncated": len(rows) > MAX_ROWS}
+    truncated = len(rows) > MAX_ROWS
+    # truncated=True면 row_count는 전체 개수가 아니라 MAX_ROWS (실제로는 그 이상)
+    return {"row_count": min(len(rows), MAX_ROWS), "rows": rows[:MAX_ROWS],
+            "truncated": truncated}
 
 
 def ask_graph(question, model=None, max_steps=6, verbose=True):
@@ -97,7 +111,8 @@ def ask_graph(question, model=None, max_steps=6, verbose=True):
                               temperature=0, timeout=120, num_retries=3, **opts)
             msg = resp.choices[0].message
             if not msg.tool_calls:
-                return {"answer": msg.content, "steps": steps}
+                return {"answer": msg.content or "(모델이 빈 응답을 반환했습니다)",
+                        "steps": steps}
 
             messages.append(msg)
             for tc in msg.tool_calls:
@@ -129,7 +144,8 @@ def _print_step(n, st):
         print(f"[{n}] 스키마 확인")
         return
     r = st["result"]
-    status = r.get("error") or f"{r.get('row_count', 0)}행"
+    status = r.get("error") or (f"{r.get('row_count', 0)}행 이상 (잘림)" if r.get("truncated")
+                                else f"{r.get('row_count', 0)}행")
     print(f"[{n}] {st.get('purpose') or 'Cypher 실행'} -> {status}\n"
           f"{st['query']}")
 
@@ -139,12 +155,15 @@ def show(res):
     import pandas as pd
     from IPython.display import display, Markdown
     display(Markdown(f"### 답변\n\n{res['answer']}"))
-    for i, st in enumerate(res["steps"], 1):
-        if st["tool"] != "run_cypher":
-            continue
+    queries = [st for st in res["steps"] if st["tool"] == "run_cypher"]
+    for i, st in enumerate(queries, 1):
         display(Markdown(f"**쿼리 {i}** - {st.get('purpose') or ''}\n```cypher\n{st['query']}\n```"))
         r = st["result"]
         if r.get("error"):
             display(Markdown(f"> 오류: {r['error']}"))
-        elif r.get("rows"):
+        elif not r.get("rows"):
+            display(Markdown("> 조회 결과 없음 (0행)"))
+        else:
+            if r.get("truncated"):
+                display(Markdown(f"> 결과가 많아 상위 {MAX_ROWS}행만 표시합니다."))
             display(pd.DataFrame(r["rows"]))
