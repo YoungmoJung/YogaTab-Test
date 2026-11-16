@@ -11,6 +11,12 @@ MODELS = {
     "Qwen": "groq/qwen/qwen3.8-27b",
 }
 
+# 모델별 추가 옵션 (MODELS의 짧은 이름 기준)
+# Qwen: 추론(thinking) 출력을 끄고 바로 답하도록 설정
+MODEL_OPTIONS = {
+    "Qwen": {"extra_body": {"reasoning_effort": "none"}},
+}
+
 DEFAULT = os.getenv("LLM_MODEL","claude")
 
 def resolve(model=None):
@@ -36,10 +42,7 @@ def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, tim
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    kwargs = {}
-    MODEL_OPTIONS = {
-    "qwen": {"extra_body": {"responsing_effort": "none"}},
-    }
+    kwargs = dict(MODEL_OPTIONS.get(model or DEFAULT, {}))
     if temperature is not None:
         kwargs["temperature"] = temperature
     if max_tokens is not None:
