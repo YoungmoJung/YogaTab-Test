@@ -95,10 +95,13 @@ def run_cypher(store, query):
             "truncated": truncated}
 
 
-def ask_graph(question, model=None, max_steps=6, verbose=True):
-    """반환값: {"answer": 답변, "steps": [{"tool", "query", "purpose", "result"}...]}"""
+def ask_graph(question, model=None, max_steps=6, verbose=True, temperature=None):
+    """temperature: None이면 모델 기본값 사용 (claude-sonnet-5-5 등 1만 허용하는 모델이 있음)
+    반환값: {"answer": 답변, "steps": [{"tool", "query", "purpose", "result"}...]}"""
     name = model or llm_client.DEFAULT
-    opts = getattr(llm_client, "MODEL_OPTIONS", {}).get(name, {})
+    opts = dict(getattr(llm_client, "MODEL_OPTIONS", {}).get(name, {}))
+    if temperature is not None:
+        opts["temperature"] = temperature
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": question}]
     steps = []
@@ -108,7 +111,7 @@ def ask_graph(question, model=None, max_steps=6, verbose=True):
             last = i == max_steps  # 마지막 차례에는 도구 없이 답변만 하도록 강제
             resp = completion(model=llm_client.resolve(name), messages=messages,
                               tools=TOOLS, tool_choice="none" if last else "auto",
-                              temperature=0, timeout=120, num_retries=3, **opts)
+                              timeout=120, num_retries=3, **opts)
             msg = resp.choices[0].message
             if not msg.tool_calls:
                 return {"answer": msg.content or "(모델이 빈 응답을 반환했습니다)",
