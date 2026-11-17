@@ -100,8 +100,8 @@ def run_cypher(store, query):
 def ask_graph(question, model=None, max_steps=6, verbose=True, temperature=None):
     """temperature: None이면 모델 기본값 사용 (claude-sonnet-5-5 등 1만 허용하는 모델이 있음)
     반환값: {"answer": 답변, "steps": [{"tool", "query", "purpose", "result"}...]}"""
-    name = model or llm_client.DEFAULT
-    opts = dict(getattr(llm_client, "MODEL_OPTIONS", {}).get(name, {}))
+    name = llm_client.canonical(model)  # 대소문자 구분 없이 MODELS 이름으로 맞춤
+    opts = llm_client.options(name)
     if temperature is not None:
         opts["temperature"] = temperature
     messages = [{"role": "system", "content": SYSTEM},

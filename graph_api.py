@@ -20,7 +20,7 @@ app = FastAPI(title="mfg-graph Agent API")
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
-    model: Optional[str] = None         # claude / claude-pro / gemini / qwen (생략 시 LLM_MODEL)
+    model: Optional[str] = None         # claude / claude-pro / gemini / qwen (대소문자 무관, 생략 시 LLM_MODEL)
     include_steps: bool = True          # 실행된 Cypher와 행 수를 함께 반환
 
 

@@ -19,9 +19,24 @@ MODEL_OPTIONS = {
 
 DEFAULT = os.getenv("LLM_MODEL","claude")
 
-def resolve(model=None):
+def canonical(model=None):
+    """짧은 이름을 대소문자 구분 없이 MODELS의 키로 맞춤 (예: "qwen" -> "Qwen")
+    MODELS에 없는 이름(실제 모델 ID 등)은 그대로 반환"""
     name = model or DEFAULT
+    for key in MODELS:
+        if key.lower() == name.lower():
+            return key
+    return name
+
+
+def resolve(model=None):
+    name = canonical(model)
     return MODELS.get(name, name)
+
+
+def options(model=None):
+    """모델별 추가 옵션 (대소문자 구분 없음). 호출 쪽에서 수정해도 원본이 바뀌지 않도록 복사본 반환"""
+    return dict(MODEL_OPTIONS.get(canonical(model), {}))
 
 #def chat(prompt, system=None, model=None, temperature=0):
 #    messages=[]
@@ -42,7 +57,7 @@ def chat(prompt, system=None, model=None, temperature=None, max_tokens=None, tim
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    kwargs = dict(MODEL_OPTIONS.get(model or DEFAULT, {}))
+    kwargs = options(model)
     if temperature is not None:
         kwargs["temperature"] = temperature
     if max_tokens is not None:
