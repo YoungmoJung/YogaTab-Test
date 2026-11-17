@@ -12,6 +12,16 @@ SYSTEM=f"""너는 제조공정 지식을 그래프로 구조화하는 도우미�
 - evidence : 근거가 된 원문 문장(또는 구절)을 그대로 옮긴다.
 - reason : 이 라벨/관계 타입을 선택한 이유를 한 문장으로 설명한다.
 
+props(속성) 작성 규칙:
+- 노드 props 에는 그 대상 자체의 고정된 정보만 넣는다.
+  (예: Parameter 의 관리 기준값 "금형 온도는 60도로 관리한다" -> {{"value": 60, "unit": "도"}})
+- 특정 상황에서만 성립하는 조건(불량 발생 조건 등)은 노드 props 에 넣지 않고
+  해당 관계의 props 에 넣는다. 관계 props 키는 condition(조건 문구), value(기준 수치),
+  unit(단위)를 사용한다.
+  (예: "금형 온도가 50도보다 낮으면 웰드라인 불량이 발생한다"
+       -> 금형 온도 -[CAUSES]-> 웰드라인, props: {{"condition": "50도 미만", "value": 50, "unit": "도"}})
+- 해당 내용이 없으면 props 는 빈 객체 {{}} 로 둔다.
+
 마지막으로 summary 에 전체 추출 결과를 2~3문장으로 요약하고,
 판단이 애매했던 점이 있으면 notes 에 적는다. (없으면 빈 문자열)
 
@@ -21,7 +31,7 @@ SYSTEM=f"""너는 제조공정 지식을 그래프로 구조화하는 도우미�
             "evidence": "...", "reason": "..."
 }}],
 "relationships":[{{"from":"건조", "from_label":"Process", "type":"NEXT", 
-                "to":"사출","to_label":"Process",
+                "to":"사출","to_label":"Process", "props": {{}},
                 "evidence": "...", "reason": "..."}}],
 "summary": "...", "notes": "..."
 }}
@@ -64,6 +74,7 @@ def explain(data, title=None):
 
     rels = pd.DataFrame([{
         "시작": n.get("from"), "관계": n.get("type"), "끝": n.get("to"),
+        "속성": ", ".join(f"{k}={v}" for k, v in (n.get("props") or {}).items()),
         "근거 문장": n.get("evidence", ""), "선택 이유": n.get("reason", ""),        
     } for n in data.get("relationships",[])])
 

@@ -29,6 +29,17 @@ def _text(v):
     return v.strip() if isinstance(v, str) else ""
 
 
+def _props(item):
+    """props 중 Neo4j에 저장 가능한 단순 값만 추림
+    (name은 MERGE 키, evidence/reason은 리스트로 따로 관리하므로 제외)"""
+    props = item.get("props") or {}
+    if not isinstance(props, dict):
+        return {}
+    return {k: v for k, v in props.items()
+            if k not in ("name", "evidence", "reason")
+            and isinstance(v, (str, int, float, bool))}
+
+
 class GraphStore:
     def __init__(self):
         self.driver = GraphDatabase.driver(
@@ -54,13 +65,10 @@ class GraphStore:
                 if n.get("label") not in ALLOWED_LABELS or not n.get("name"):
                     result["skipped_nodes"].append(n)
                     continue
-                # name은 MERGE 키, evidence/reason은 리스트로 따로 관리하므로 props에서 제외
-                props = {k: v for k, v in n.get("props", {}).items()
-                         if k not in ("name", "evidence", "reason")
-                         and isinstance(v, (str, int, float, bool))}
+                # 노드 props: 대상 자체의 고정 정보 (예: Parameter 관리 기준값)
                 s.run(f"MERGE (n:{n['label']} {{name: $name}}) SET n += $props "
                       + _evidence_clause("n"),
-                      name=n["name"], props=props,
+                      name=n["name"], props=_props(n),
                       ev=_text(n.get("evidence")), rs=_text(n.get("reason"))).consume()
                 result["nodes"] += 1
 
@@ -71,13 +79,14 @@ class GraphStore:
                         or not r.get("from") or not r.get("to")):
                     result["skipped_relationships"].append(r)
                     continue
+                # 관계 props: 그 관계에서만 성립하는 조건 (예: CAUSES의 condition/value/unit)
                 # MATCH 실패(노드 없음) 시 행이 0개라 matched=0 → 누락으로 기록
                 rec = s.run(f"MATCH (a:{r['from_label']} {{name: $a}}) "
                             f"MATCH (b:{r['to_label']} {{name: $b}}) "
-                            f"MERGE (a)-[rel:{r['type']}]->(b) "
+                            f"MERGE (a)-[rel:{r['type']}]->(b) SET rel += $props "
                             + _evidence_clause("rel")
                             + "RETURN count(*) AS matched",
-                            a=r["from"], b=r["to"],
+                            a=r["from"], b=r["to"], props=_props(r),
                             ev=_text(r.get("evidence")), rs=_text(r.get("reason"))).single()
                 if rec and rec["matched"] > 0:
                     result["relationships"] += 1
