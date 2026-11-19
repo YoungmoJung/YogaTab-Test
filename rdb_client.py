@@ -45,12 +45,12 @@ _SYSTEM_OBJ = re.compile(r"\b(sqlite_\w+|sys\.\w+|information_schema\.\w+|master
 _PART = r"(?:\[\w+\]|\"\w+\"|`\w+`|\w+)"
 _NAME = rf"{_PART}(?:\s*\.\s*{_PART})*"
 # FROM/JOIN 뒤 테이블 (FROM (mfg.T) 처럼 괄호로 감싼 경우 포함, 서브쿼리는 제외)
-_TABLE_REF = re.compile(rf"\b(?:FROM|JOIN)\s*(?:\(\s*)*(?!SELECT\b|WITH\b|VALUES\b)({_NAME})",
+_TABLE_REF = re.compile(rf"\b(?:FROM|JOIN)\b\s*(?:\(\s*)*(?!SELECT\b|WITH\b|VALUES\b)({_NAME})",
                         re.IGNORECASE)
 # FROM a, b 형태(쉼표 조인)는 두 번째 테이블을 검사하기 어려우므로 JOIN 구문만 허용
 #   (FROM 직후가 아닌 위치의 쉼표 조인, 예: JOIN b ON 1=1, c 는 정규식으로 다 잡기 어려우므로
 #    SQLite에서는 authorizer가 최종 차단)
-_COMMA_JOIN = re.compile(rf"\bFROM\s*{_NAME}(?:\s+(?:AS\s+)?(?!WHERE|GROUP|ORDER|LIMIT|JOIN|"
+_COMMA_JOIN = re.compile(rf"\bFROM\b\s*{_NAME}(?:\s+(?:AS\s+)?(?!WHERE|GROUP|ORDER|LIMIT|JOIN|"
                          r"INNER|LEFT|RIGHT|FULL|CROSS|ON|UNION)\w+)?\s*,", re.IGNORECASE)
 # WITH x AS (...), WITH RECURSIVE c(n) AS (...), ..., y AS (...)
 _CTE_NAME = re.compile(r"(?:\bWITH(?:\s+RECURSIVE)?|,)\s*(\w+)\s*(?:\([^()]*\))?\s*AS\s*\(",
