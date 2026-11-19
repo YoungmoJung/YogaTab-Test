@@ -12,10 +12,13 @@
     알기 쉬운 오류 메시지를 주기 위한 1차 검사이고, 최종 차단은 DB가 실제로 읽는
     테이블을 기준으로 하는 authorizer가 담당한다.
 """
+import datetime
+import decimal
 import os
 import re
 import sqlite3
 import time
+import warnings
 from pathlib import Path
 
 RDB_TYPE = os.getenv("RDB_TYPE", "sqlite").lower()
@@ -69,9 +72,17 @@ def _norm(name):
 
 
 # ---------------------------------------------------------------- 연결
+_IDENT_RE = re.compile(r"\w+")  # 스키마·테이블 이름으로 허용하는 형식 (영문·숫자·_ , 한글 포함)
+
+
 def _connect_sqlite():
     con = sqlite3.connect("file::memory:", uri=True)  # uri=True 여야 ATTACH에 mode=ro 적용
     for f in sorted(SQLITE_DIR.glob("*.db")):
+        # 파일 이름이 그대로 스키마 이름(SQL 식별자)이 되므로 형식이 맞지 않으면 건너뜀
+        if not _IDENT_RE.fullmatch(f.stem):
+            warnings.warn(f"스키마 이름으로 쓸 수 없는 파일 이름이라 건너뜁니다: {f.name} "
+                          f"(영문·숫자·_ 만 사용, 예: mfg_2024.db)")
+            continue
         uri = f"file:{f.resolve().as_posix()}?mode=ro"
         con.execute("ATTACH DATABASE ? AS " + f.stem, (uri,))
     con.execute("PRAGMA query_only = ON")
@@ -114,13 +125,25 @@ def connect():
 
 
 def table_columns(table):
-    """테이블의 컬럼 이름 목록 (매핑 정의서 검증용). 테이블이 없으면 빈 리스트."""
-    schema, _, name = table.rpartition(".")
+    """테이블의 컬럼 이름 목록 (매핑 정의서 검증용). 테이블이 없으면 빈 리스트.
+    table: "스키마.테이블" 또는 "테이블" ([ ] " ` 로 감싼 이름도 가능)
+    스키마를 생략하면 SQLite는 연결된 모든 스키마에서 찾음 (SQLite의 이름 해석 순서와 동일)"""
+    # 괄호·따옴표만 제거하고 대소문자는 유지 (MSSQL 대소문자 구분 collation 대비)
+    clean = re.sub(r"[\[\]\"`]", "", re.sub(r"\s*\.\s*", ".", table.strip()))
+    schema, _, name = clean.rpartition(".")
+    # PRAGMA는 바인딩 파라미터를 쓸 수 없으므로 이름 형식을 먼저 검사 (SQL 주입 방지)
+    for part in filter(None, (schema, name)):
+        if not _IDENT_RE.fullmatch(part):
+            raise ValueError(f"테이블 이름 형식이 올바르지 않습니다: {table}")
     con = connect()
     try:
         if RDB_TYPE == "sqlite":
-            rows = con.execute(f"PRAGMA {schema or 'main'}.table_info({name})").fetchall()
-            return [r[1] for r in rows]
+            schemas = [schema] if schema else [r[1] for r in con.execute("PRAGMA database_list")]
+            for sc in schemas:
+                rows = con.execute(f'PRAGMA "{sc}".table_info("{name}")').fetchall()
+                if rows:
+                    return [r[1] for r in rows]
+            return []
         cur = con.cursor()
         cur.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
                     "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?", (schema or "dbo", name))
@@ -173,9 +196,43 @@ def _to_qmark(sql, params):
 
 
 # ---------------------------------------------------------------- 실행
+def _param_value(v):
+    """파라미터 값을 DB에 넘길 수 있는 형태로 변환. 지원하지 않는 형식이면 TypeError
+    SQLite는 날짜를 문자열로 저장하므로 'YYYY-MM-DD HH:MM:SS' / 'YYYY-MM-DD' 로 변환
+    MSSQL(pyodbc)은 date/datetime/Decimal을 그대로 지원"""
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if RDB_TYPE == "sqlite":
+        if isinstance(v, datetime.datetime):  # datetime은 date의 하위 클래스라 먼저 검사
+            return v.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(v, datetime.date):
+            return v.strftime("%Y-%m-%d")
+        if isinstance(v, decimal.Decimal):
+            return float(v)
+    elif isinstance(v, (datetime.date, decimal.Decimal)):
+        return v
+    raise TypeError(f"지원하지 않는 파라미터 형식입니다: {type(v).__name__} ({v!r:.50})")
+
+
+def _prepare_params(params):
+    """dict(:name 방식) 또는 list/tuple(? 방식)을 받아 값 형식을 변환"""
+    if params is None:
+        return {}
+    if isinstance(params, dict):
+        return {k: _param_value(v) for k, v in params.items()}
+    if isinstance(params, (list, tuple)):
+        return [_param_value(v) for v in params]
+    raise TypeError(f"params는 dict(:name) 또는 list(?) 여야 합니다: {type(params).__name__}")
+
+
 def run_sql(sql, params=None, allowed_tables=()):
-    params = {k: v for k, v in (params or {}).items()
-              if isinstance(v, (str, int, float, bool)) or v is None}
+    """읽기 전용 SQL 실행
+    params: dict → :name 자리표시자 / list·tuple → ? 자리표시자 (date·datetime 사용 가능)
+    반환값: {"columns", "row_count", "rows", "truncated"} 또는 {"error"}"""
+    try:
+        params = _prepare_params(params)
+    except TypeError as e:
+        return {"error": str(e)}
     err = validate(sql, allowed_tables)
     if err:
         return {"error": err}
@@ -191,7 +248,8 @@ def run_sql(sql, params=None, allowed_tables=()):
             con.set_progress_handler(lambda: 1 if time.time() > deadline else 0, 10000)
             cur = con.execute(s, params)
         else:
-            q, values = _to_qmark(s, params)
+            # dict는 :name → ? 변환, list는 이미 ? 방식이므로 그대로
+            q, values = _to_qmark(s, params) if isinstance(params, dict) else (s, params)
             cur = con.cursor()
             cur.execute(q, values)
         columns = [c[0] for c in cur.description]
