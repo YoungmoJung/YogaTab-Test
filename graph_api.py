@@ -21,7 +21,7 @@ app = FastAPI(title="mfg-graph Agent API")
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     model: Optional[str] = None         # claude / claude-pro / gemini / qwen (대소문자 무관, 생략 시 LLM_MODEL)
-    include_steps: bool = True          # 실행된 Cypher와 행 수를 함께 반환
+    include_steps: bool = True          # 실행된 Cypher·SQL과 행 수를 함께 반환
 
 
 def _check_token(authorization: Optional[str]):
@@ -48,9 +48,12 @@ def ask(req: AskRequest, authorization: Optional[str] = Header(default=None)):
     out = {"answer": res["answer"]}
     if req.include_steps:
         out["queries"] = [{
+            "tool": s["tool"],                 # run_cypher(지식 그래프) 또는 run_sql(실측 데이터)
             "query": s["query"],
+            "params": s.get("params"),         # run_sql 바인딩 값
             "purpose": s.get("purpose"),
             "row_count": s["result"].get("row_count"),
+            "truncated": s["result"].get("truncated"),
             "error": s["result"].get("error"),
-        } for s in res["steps"] if s["tool"] == "run_cypher"]
+        } for s in res["steps"] if s["tool"] in ("run_cypher", "run_sql")]
     return out

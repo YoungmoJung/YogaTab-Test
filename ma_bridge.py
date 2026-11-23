@@ -18,24 +18,19 @@ from pathlib import Path
 
 import anthropic
 
-from graph_agent import SYSTEM, get_schema, run_cypher
+import graph_agent
+from graph_agent import SYSTEM, run_tool
 from graph_store import GraphStore
 
 IDS_FILE = Path.home() / ".ma_ids.json"
 MODEL = os.getenv("MA_MODEL", "claude-haiku-5-5")
 
-TOOLS = [
-    {"type": "custom", "name": "get_schema",
-     "description": "제조공정 지식 그래프의 노드 라벨, 관계 패턴, 속성 키, 라벨별 노드 이름 예시를 반환한다.",
-     "input_schema": {"type": "object", "properties": {}}},
-    {"type": "custom", "name": "run_cypher",
-     "description": "읽기 전용 Cypher 쿼리를 실행하고 결과 행을 JSON으로 반환한다. "
-                    "CREATE/MERGE/DELETE/SET 등 쓰기 쿼리는 거부된다.",
-     "input_schema": {"type": "object", "properties": {
-         "query": {"type": "string", "description": "실행할 Cypher 쿼리"},
-         "purpose": {"type": "string", "description": "이 쿼리로 확인하려는 내용 (한 문장)"},
-     }, "required": ["query"]}},
-]
+# 도구 정의는 graph_agent.TOOLS(OpenAI/LiteLLM 형식)를 Managed Agents custom tool 형식으로 변환해 공유
+# → graph_agent에 도구를 추가·수정하면 여기도 자동 반영 (단, 클라우드 Agent에는 setup을 다시 실행해야 반영)
+TOOLS = [{"type": "custom", "name": t["function"]["name"],
+          "description": t["function"]["description"],
+          "input_schema": t["function"]["parameters"]}
+         for t in graph_agent.TOOLS]
 
 client = anthropic.Anthropic()  # ANTHROPIC_API_KEY 사용 (Console 크레딧)
 
@@ -67,14 +62,6 @@ def _ids():
     return json.loads(IDS_FILE.read_text())
 
 
-def _run_tool(store, name, args):
-    if name == "get_schema":
-        return get_schema(store)
-    if name == "run_cypher":
-        return run_cypher(store, args.get("query", ""))
-    return {"error": f"알 수 없는 도구: {name}"}
-
-
 def serve_session(session_id, question=None):
     """세션 이벤트를 받아 custom tool 호출을 처리. question이 있으면 보내고 답변이 끝나면 종료."""
     store = GraphStore()
@@ -87,11 +74,13 @@ def serve_session(session_id, question=None):
             for event in stream:
                 if event.type == "agent.custom_tool_use":
                     args = event.input or {}
-                    result = _run_tool(store, event.name, args)
+                    result = run_tool(store, event.name, args)  # graph_agent와 같은 도구 실행 함수
                     status = (result.get("error") or
                               (f"{result['row_count']}행" if "row_count" in result else "완료"))
+                    stmt = args.get("query") or args.get("sql")  # Cypher 또는 SQL
                     print(f"[도구] {event.name} -> {status}"
-                          + (f"\n      {args['query']}" if args.get("query") else ""))
+                          + (f"\n      {stmt}" if stmt else "")
+                          + (f"\n      params: {args['params']}" if args.get("params") else ""))
                     client.beta.sessions.events.send(session_id, events=[{
                         "type": "user.custom_tool_result",
                         "custom_tool_use_id": event.id,
